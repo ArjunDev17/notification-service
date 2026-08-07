@@ -19,15 +19,16 @@ func NewConsumer(
 
 	reader := kafkago.NewReader(
 		kafkago.ReaderConfig{
-
 			Brokers: brokers,
 
 			GroupID: groupID,
 
 			Topic: topic,
 
+			// Minimum amount of data to fetch.
 			MinBytes: 10e3,
 
+			// Maximum amount of data to fetch.
 			MaxBytes: 10e6,
 		},
 	)
@@ -37,15 +38,27 @@ func NewConsumer(
 	}
 }
 
-// ReadMessage reads one message from Kafka.
-func (c *Consumer) ReadMessage(
+// FetchMessage reads a message WITHOUT committing its offset.
+func (c *Consumer) FetchMessage(
 	ctx context.Context,
 ) (kafkago.Message, error) {
 
-	return c.reader.ReadMessage(ctx)
+	return c.reader.FetchMessage(ctx)
 }
 
-// Close gracefully closes Kafka consumer.
+// CommitMessage commits the processed offset.
+func (c *Consumer) CommitMessage(
+	ctx context.Context,
+	message kafkago.Message,
+) error {
+
+	return c.reader.CommitMessages(
+		ctx,
+		message,
+	)
+}
+
+// Close gracefully closes the Kafka consumer.
 func (c *Consumer) Close() error {
 
 	return c.reader.Close()
