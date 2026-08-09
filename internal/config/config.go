@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -22,7 +23,6 @@ type DatabaseConfig struct {
 
 type KafkaConfig struct {
 	Brokers []string
-
 	ConsumerGroup string
 
 	CourseCreatedTopic string
@@ -30,10 +30,19 @@ type KafkaConfig struct {
 	MaxWorkers int
 }
 
+type NotificationConfig struct {
+	// Maximum retry attempts
+	// before marking a delivery as failed.
+	MaxRetry int
+
+	// Delay between retries.
+	RetryDelaySeconds int
+}
 type Config struct {
-	App      AppConfig
-	Database DatabaseConfig
-	Kafka    KafkaConfig
+	App          AppConfig
+	Database     DatabaseConfig
+	Kafka        KafkaConfig
+	Notification NotificationConfig
 }
 
 func Load() *Config {
@@ -110,6 +119,18 @@ func Load() *Config {
 
 			MaxWorkers: 5,
 		},
+		Notification: NotificationConfig{
+
+			MaxRetry: getEnvAsInt(
+				"NOTIFICATION_MAX_RETRY",
+				3,
+			),
+
+			RetryDelaySeconds: getEnvAsInt(
+				"NOTIFICATION_RETRY_DELAY",
+				2,
+			),
+		},
 	}
 }
 
@@ -138,4 +159,23 @@ func getEnv(
 	}
 
 	return value
+}
+
+func getEnvAsInt(
+	key string,
+	defaultValue int,
+) int {
+
+	value := os.Getenv(key)
+
+	if value == "" {
+		return defaultValue
+	}
+
+	intValue, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+
+	return intValue
 }
