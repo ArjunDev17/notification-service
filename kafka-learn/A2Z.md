@@ -3254,4 +3254,3 @@ Replication
 Acknowledgement
 Then we'll go deep into the interview-heavy producer concepts:
 acks=0/1/all → retries → idempotent producer → batching → compression → delivery guarantees.
-
