@@ -17,16 +17,12 @@ type deliveryRepository struct {
 func NewDeliveryRepository(
 	pool *pgxpool.Pool,
 ) notificationservice.DeliveryRepository {
-
 	return &deliveryRepository{
 		pool: pool,
 	}
 }
 
-func (r *deliveryRepository) Create(
-	ctx context.Context,
-	delivery *domain.NotificationDelivery,
-) error {
+func (r *deliveryRepository) Create(ctx context.Context, delivery *domain.NotificationDelivery) error {
 
 	query := `
 	INSERT INTO notification_deliveries
