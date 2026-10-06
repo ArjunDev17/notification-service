@@ -15,12 +15,12 @@ import (
 	"github.com/ArjunDev17/notification-service/internal/logger"
 	dispatcher "github.com/ArjunDev17/notification-service/internal/notification"
 	emailnotification "github.com/ArjunDev17/notification-service/internal/notification/email"
+	"github.com/ArjunDev17/notification-service/internal/uow"
 	notificationusecase "github.com/ArjunDev17/notification-service/internal/usecase/notification"
 	"github.com/ArjunDev17/notification-service/internal/worker"
 
 	"github.com/ArjunDev17/notification-service/repository/postgres"
 
-	"github.com/ArjunDev17/notification-service/internal/uow"
 	notificationservice "github.com/ArjunDev17/notification-service/service/notification"
 )
 
@@ -109,6 +109,10 @@ func (a *Application) Run() error {
 		db.Pool,
 	)
 
+	processedEventRepository := postgres.NewProcessedEventRepository(
+		db.Pool,
+	)
+
 	//-------------------------------------------------------
 	// Notification Senders
 	//-------------------------------------------------------
@@ -143,7 +147,9 @@ func (a *Application) Run() error {
 		notificationusecase.NewProcessCourseCreatedUseCase(
 			unitOfWork,
 			notificationService,
+			processedEventRepository,
 		)
+
 	//-------------------------------------------------------
 	// Kafka Consumer Handler
 	//-------------------------------------------------------
