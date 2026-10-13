@@ -36,84 +36,44 @@ func (uc *ProcessCourseCreatedUseCase) Execute(
 	ctx context.Context,
 	event events.CourseCreatedEvent,
 ) error {
+	bundle := mapper.ToNotificationBundle(event)
 
-	//------------------------------------------------------
-	// Step 1 : Check Idempotency
-	//------------------------------------------------------
+	processedEvent := &domain.ProcessedEvent{
+		ID:          uuid.NewString(),
+		EventID:     event.EventID,
+		EventType:   event.EventType,
+		ProcessedAt: time.Now(),
+	}
 
-	processed, err := uc.processedEventRepository.Exists(
-		ctx,
-		event.EventID,
-	)
+	alreadyProcessed := false
 
+	// Claim the event and persist business data atomically.
+	err := uc.uow.Do(ctx, func(txCtx context.Context) error {
+		claimed, err := uc.processedEventRepository.TryCreate(
+			txCtx,
+			processedEvent,
+		)
+		if err != nil {
+			return err
+		}
+
+		if !claimed {
+			alreadyProcessed = true
+			return nil
+		}
+
+		return uc.notificationService.Save(txCtx, bundle)
+	})
 	if err != nil {
 		return err
 	}
 
-	if processed {
-
-		// Event was already processed.
-		// We return nil so the Kafka consumer
-		// can safely commit the offset.
+	// A duplicate event must not create or dispatch
+	// another notification.
+	if alreadyProcessed {
 		return nil
 	}
 
-	//------------------------------------------------------
-	// Step 2 : Convert Kafka Event -> Domain Model
-	//------------------------------------------------------
-
-	bundle := mapper.ToNotificationBundle(
-		event,
-	)
-
-	//------------------------------------------------------
-	// Step 3 : Persist Notification + Delivery
-	//          + Processed Event
-	//------------------------------------------------------
-
-	if err := uc.uow.Do(
-		ctx,
-		func(txCtx context.Context) error {
-
-			// Save notification and deliveries.
-			if err := uc.notificationService.Save(
-				txCtx,
-				bundle,
-			); err != nil {
-				return err
-			}
-
-			// Mark Kafka event as processed.
-			processedEvent := &domain.ProcessedEvent{
-				ID:          uuid.NewString(),
-				EventID:     event.EventID,
-				EventType:   event.EventType,
-				ProcessedAt: time.Now(),
-			}
-
-			if err := uc.processedEventRepository.Create(
-				txCtx,
-				processedEvent,
-			); err != nil {
-				return err
-			}
-
-			return nil
-		},
-	); err != nil {
-		return err
-	}
-
-	//------------------------------------------------------
-	// Step 4 : Dispatch after successful DB commit
-	//------------------------------------------------------
-
-	if err := uc.notificationService.Dispatch(
-		ctx,
-		bundle,
-	); err != nil {
-		return err
-	}
-
-	return nil
+	// External dispatch happens after the DB transaction commits.
+	return uc.notificationService.Dispatch(ctx, bundle)
 }

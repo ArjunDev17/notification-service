@@ -1,3 +1,4 @@
+
 package notification
 
 import (
@@ -6,20 +7,11 @@ import (
 	"github.com/ArjunDev17/notification-service/domain"
 )
 
-// ProcessedEventRepository provides persistence
-// operations for idempotency tracking.
+// ProcessedEventRepository atomically claims events
+// for idempotent processing.
 type ProcessedEventRepository interface {
-
-	// Create records an event as successfully processed.
-	Create(
+	TryCreate(
 		ctx context.Context,
 		event *domain.ProcessedEvent,
-	) error
-
-	// Exists checks whether an event has already
-	// been processed.
-	Exists(
-		ctx context.Context,
-		eventID string,
 	) (bool, error)
 }
