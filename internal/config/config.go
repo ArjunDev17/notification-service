@@ -20,7 +20,6 @@ type DatabaseConfig struct {
 	Name     string
 	SSLMode  string
 }
-
 type KafkaConfig struct {
 	Brokers               []string
 	ConsumerGroup         string
