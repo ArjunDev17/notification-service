@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/ArjunDev17/notification-service/events"
 	kafkaclient "github.com/ArjunDev17/notification-service/internal/kafka"
 	notificationusecase "github.com/ArjunDev17/notification-service/internal/usecase/notification"
 	"github.com/ArjunDev17/notification-service/internal/worker"
+
+	kafkago "github.com/segmentio/kafka-go"
 )
 
 type CourseCreatedConsumer struct {
@@ -20,20 +23,23 @@ type CourseCreatedConsumer struct {
 	useCase *notificationusecase.ProcessCourseCreatedUseCase
 
 	logger *slog.Logger
+
+	dlqPublisher *kafkaclient.DLQPublisher
 }
 
 func NewCourseCreatedConsumer(
 	consumer *kafkaclient.Consumer,
+	dlqPublisher *kafkaclient.DLQPublisher,
 	workerPool *worker.Pool,
 	useCase *notificationusecase.ProcessCourseCreatedUseCase,
 	logger *slog.Logger,
 ) *CourseCreatedConsumer {
-
 	return &CourseCreatedConsumer{
-		consumer:   consumer,
-		workerPool: workerPool,
-		useCase:    useCase,
-		logger:     logger,
+		consumer:     consumer,
+		dlqPublisher: dlqPublisher,
+		workerPool:   workerPool,
+		useCase:      useCase,
+		logger:       logger,
 	}
 }
 
@@ -88,30 +94,36 @@ func (c *CourseCreatedConsumer) Start(
 
 		var event events.CourseCreatedEvent
 
-		if err := json.Unmarshal(
-			message.Value,
-			&event,
-		); err != nil {
-
+		if err := json.Unmarshal(message.Value, &event); err != nil {
 			c.logger.Error(
-				"invalid course.created event",
-				"error",
-				err,
+				"invalid course.created event; sending to DLQ",
+				"error", err,
+				"offset", message.Offset,
+				"partition", message.Partition,
 			)
 
-			// Invalid JSON can never succeed.
-			// Commit so Kafka doesn't retry forever.
-			if err := c.consumer.CommitMessage(
-				ctx,
-				message,
-			); err != nil {
-
+			if dlqErr := c.sendToDLQ(ctx, message, err); dlqErr != nil {
 				c.logger.Error(
-					"failed to commit poison message",
-					"error",
-					err,
+					"failed to handle poison message",
+					"error", dlqErr,
+					"offset", message.Offset,
+					"partition", message.Partition,
 				)
+
+				// Do not commit if publishing to the DLQ failed.
+				// Kafka can redeliver the original message.
+				if ctx.Err() != nil {
+					return nil
+				}
+
+				continue
 			}
+
+			c.logger.Info(
+				"invalid message sent to DLQ",
+				"offset", message.Offset,
+				"partition", message.Partition,
+			)
 
 			continue
 		}
@@ -180,4 +192,19 @@ func (c *CourseCreatedConsumer) Start(
 			message.Partition,
 		)
 	}
+}
+func (c *CourseCreatedConsumer) sendToDLQ(
+	ctx context.Context,
+	message kafkago.Message,
+	cause error,
+) error {
+	if err := c.dlqPublisher.Publish(ctx, message, cause); err != nil {
+		return err
+	}
+
+	if err := c.consumer.CommitMessage(ctx, message); err != nil {
+		return fmt.Errorf("commit original message after DLQ publish: %w", err)
+	}
+
+	return nil
 }
