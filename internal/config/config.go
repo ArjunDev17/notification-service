@@ -20,16 +20,13 @@ type DatabaseConfig struct {
 	Name     string
 	SSLMode  string
 }
-
 type KafkaConfig struct {
-	Brokers []string
-	ConsumerGroup string
-
-	CourseCreatedTopic string
-
-	MaxWorkers int
+	Brokers               []string
+	ConsumerGroup         string
+	CourseCreatedTopic    string
+	CourseCreatedDLQTopic string
+	MaxWorkers            int
 }
-
 type NotificationConfig struct {
 	// Maximum retry attempts
 	// before marking a delivery as failed.
@@ -116,7 +113,10 @@ func Load() *Config {
 				"KAFKA_TOPIC_COURSE_CREATED",
 				"course.created",
 			),
-
+			CourseCreatedDLQTopic: getEnv(
+				"KAFKA_TOPIC_COURSE_CREATED_DLQ",
+				"course.created.dlq",
+			),
 			MaxWorkers: 5,
 		},
 		Notification: NotificationConfig{

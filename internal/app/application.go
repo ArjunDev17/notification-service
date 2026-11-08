@@ -87,6 +87,12 @@ func (a *Application) Run() error {
 	)
 	defer kafkaConsumer.Close()
 
+	kafkaDLQPublisher := kafka.NewDLQPublisher(
+		a.config.Kafka.Brokers,
+		a.config.Kafka.CourseCreatedDLQTopic,
+	)
+	defer kafkaDLQPublisher.Close()
+
 	//-------------------------------------------------------
 	// Worker Pool
 	//-------------------------------------------------------
@@ -149,19 +155,19 @@ func (a *Application) Run() error {
 			notificationService,
 			processedEventRepository,
 		)
-
-	//-------------------------------------------------------
-	// Kafka Consumer Handler
-	//-------------------------------------------------------
-
+		//-------------------------------------------------------
+		// Kafka Consumer Handler
+		//-------------------------------------------------------
 	courseCreatedConsumer :=
 		consumerhandler.NewCourseCreatedConsumer(
 			kafkaConsumer,
+			kafkaDLQPublisher,
 			workerPool,
 			processCourseCreatedUseCase,
 			a.logger,
+			a.config.Notification.MaxRetry,
+			a.config.Notification.RetryDelaySeconds,
 		)
-
 	//-------------------------------------------------------
 	// Start Consumer
 	//-------------------------------------------------------
