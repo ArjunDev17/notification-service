@@ -155,9 +155,9 @@ func (a *Application) Run() error {
 			notificationService,
 			processedEventRepository,
 		)
-	//-------------------------------------------------------
-	// Kafka Consumer Handler
-	//-------------------------------------------------------
+		//-------------------------------------------------------
+		// Kafka Consumer Handler
+		//-------------------------------------------------------
 	courseCreatedConsumer :=
 		consumerhandler.NewCourseCreatedConsumer(
 			kafkaConsumer,
@@ -165,6 +165,8 @@ func (a *Application) Run() error {
 			workerPool,
 			processCourseCreatedUseCase,
 			a.logger,
+			a.config.Notification.MaxRetry,
+			a.config.Notification.RetryDelaySeconds,
 		)
 	//-------------------------------------------------------
 	// Start Consumer
