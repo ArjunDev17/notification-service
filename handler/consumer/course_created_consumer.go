@@ -50,23 +50,32 @@ func NewCourseCreatedConsumer(
 }
 
 // Start begins consuming Kafka messages.
+
 func (c *CourseCreatedConsumer) Start(ctx context.Context) error {
+
 	c.logger.Info("starting course.created consumer")
 
+	// Start worker pool once.
 	c.workerPool.Start(ctx)
 
+	// Ensure workers shut down when Start exits.
 	defer c.workerPool.Shutdown()
 
 	for {
+
+		// STEP 1: Check shutdown signal.
 		if ctx.Err() != nil {
 			c.logger.Info("consumer shutting down")
 			return nil
 		}
 
-		// STEP 1: Fetch Kafka message.
+		// STEP 2: Fetch Kafka message without committing.
 		message, err := c.consumer.FetchMessage(ctx)
+
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
+
+			if errors.Is(err, context.Canceled) ||
+				ctx.Err() != nil {
 				return nil
 			}
 
@@ -75,17 +84,17 @@ func (c *CourseCreatedConsumer) Start(ctx context.Context) error {
 				"error", err,
 			)
 
-			if ctx.Err() != nil {
-				return nil
-			}
-
 			continue
 		}
 
-		// STEP 2: Deserialize event.
+		// STEP 3: Deserialize Kafka event.
 		var event events.CourseCreatedEvent
 
-		if err := json.Unmarshal(message.Value, &event); err != nil {
+		if err := json.Unmarshal(
+			message.Value,
+			&event,
+		); err != nil {
+
 			c.logger.Error(
 				"invalid course.created event",
 				"error", err,
@@ -93,51 +102,67 @@ func (c *CourseCreatedConsumer) Start(ctx context.Context) error {
 				"partition", message.Partition,
 			)
 
-			if dlqErr := c.sendToDLQ(ctx, message, err); dlqErr != nil {
+			// Malformed JSON is a permanent failure.
+			// Send directly to DLQ.
+			if dlqErr := c.sendToDLQ(
+				ctx,
+				message,
+				err,
+			); dlqErr != nil {
+
 				c.logger.Error(
-					"failed to send invalid message to DLQ",
+					"failed to publish invalid event to DLQ",
 					"error", dlqErr,
-					"offset", message.Offset,
 				)
 
+				// Do not acknowledge an unhandled message.
+				// Stop this consumer to avoid advancing
+				// beyond the failed offset.
 				if ctx.Err() != nil {
 					return nil
 				}
 
-				continue
+				return fmt.Errorf(
+					"DLQ handling failed: %w",
+					dlqErr,
+				)
 			}
 
 			c.logger.Info(
-				"invalid message successfully sent to DLQ",
+				"invalid event moved to DLQ",
 				"offset", message.Offset,
-				"partition", message.Partition,
 			)
 
 			continue
 		}
 
-		// STEP 3: Process event with bounded retries.
+		// STEP 4: Process event with bounded retries.
 		err = c.processWithRetry(
 			ctx,
 			event,
 		)
 
 		if err != nil {
-			if errors.Is(err, context.Canceled) ||
-				errors.Is(err, context.DeadlineExceeded) {
+
+			if ctx.Err() != nil {
 				return nil
 			}
 
 			c.logger.Error(
-				"notification processing exhausted retries",
+				"notification processing failed after retries",
 				"course_id", event.CourseID,
 				"error", err,
 			)
 
-			// STEP 4: Publish exhausted message to DLQ.
-			if dlqErr := c.sendToDLQ(ctx, message, err); dlqErr != nil {
+			// STEP 5: Publish exhausted event to DLQ.
+			if dlqErr := c.sendToDLQ(
+				ctx,
+				message,
+				err,
+			); dlqErr != nil {
+
 				c.logger.Error(
-					"failed to send exhausted message to DLQ",
+					"failed to publish exhausted event to DLQ",
 					"course_id", event.CourseID,
 					"error", dlqErr,
 				)
@@ -146,30 +171,48 @@ func (c *CourseCreatedConsumer) Start(ctx context.Context) error {
 					return nil
 				}
 
-				// Do not commit. Kafka can redeliver.
-				continue
+				return fmt.Errorf(
+					"DLQ handling failed for course %s: %w",
+					event.CourseID,
+					dlqErr,
+				)
 			}
 
 			c.logger.Warn(
-				"message moved to DLQ after retries",
+				"event moved to DLQ after retry exhaustion",
 				"course_id", event.CourseID,
 				"offset", message.Offset,
+				"partition", message.Partition,
 			)
 
 			continue
 		}
 
-		// STEP 5: Commit successful message.
-		if err := c.consumer.CommitMessage(ctx, message); err != nil {
+		// STEP 6: Commit offset after successful processing.
+		if err := c.consumer.CommitMessage(
+			ctx,
+			message,
+		); err != nil {
+
 			c.logger.Error(
-				"failed to commit kafka offset",
+				"failed to commit Kafka offset",
+				"course_id", event.CourseID,
 				"error", err,
-				"offset", message.Offset,
 			)
 
-			continue
+			if ctx.Err() != nil {
+				return nil
+			}
+
+			// Stop instead of fetching later messages
+			// while this offset remains uncommitted.
+			return fmt.Errorf(
+				"commit Kafka offset: %w",
+				err,
+			)
 		}
 
+		// STEP 7: Log successful processing.
 		c.logger.Info(
 			"course.created processed successfully",
 			"course_id", event.CourseID,
